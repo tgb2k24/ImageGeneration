@@ -1,4 +1,4 @@
-# Satendra Image Generator Chat
+# Image Generator Chat
 
 A powerful AI-powered image generation and editing application built with React, Vite, and Google's Gemini AI.
 
