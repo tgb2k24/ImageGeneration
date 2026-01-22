@@ -1,4 +1,8 @@
-# React + Vite
+# ImageGeneration
+
+A React + Vite project for image generation.
+
+## About
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
