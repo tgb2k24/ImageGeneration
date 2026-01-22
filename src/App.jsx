@@ -29,34 +29,113 @@ export default function GeminiTextToImage() {
       window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
+      recognitionRef.current.continuous = true; // Changed to true for more reliable recognition
       recognitionRef.current.interimResults = true;
       recognitionRef.current.lang = "en-US";
+      recognitionRef.current.maxAlternatives = 1;
 
       recognitionRef.current.onstart = () => {
+        console.log("Speech recognition started successfully");
         setIsListening(true);
       };
 
       recognitionRef.current.onend = () => {
+        console.log("Speech recognition ended");
         setIsListening(false);
       };
 
       recognitionRef.current.onresult = (event) => {
+        console.log("Speech recognition result received");
         let interimTranscript = "";
+        let hasFinalResult = false;
+
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
+            console.log("Final transcript:", transcript);
             setPrompt((prev) => prev + (prev ? " " : "") + transcript);
+            hasFinalResult = true;
           } else {
             interimTranscript += transcript;
+            console.log("Interim transcript:", interimTranscript);
           }
+        }
+
+        // Auto-stop after getting final result (with small delay for natural flow)
+        if (hasFinalResult && recognitionRef.current) {
+          setTimeout(() => {
+            if (recognitionRef.current && isListening) {
+              try {
+                recognitionRef.current.stop();
+                console.log("Auto-stopping after final result");
+              } catch (e) {
+                console.log("Already stopped");
+              }
+            }
+          }, 500);
         }
       };
 
       recognitionRef.current.onerror = (event) => {
-        console.error("Speech recognition error:", event.error);
+        console.error("Speech recognition error details:", {
+          error: event.error,
+          message: event.message,
+        });
         setIsListening(false);
+
+        // Provide user-friendly error messages
+        let errorMessage = "";
+        switch (event.error) {
+          case "not-allowed":
+          case "permission-denied":
+            errorMessage = "❌ Microphone permission denied!\n\nPlease:\n1. Click the 🔒 lock icon in your browser's address bar\n2. Allow microphone access\n3. Refresh the page and try again";
+            break;
+          case "no-speech":
+            // Don't show alert for no-speech, just log it
+            console.log("No speech detected, stopping...");
+            return;
+          case "audio-capture":
+            errorMessage = "❌ No microphone detected!\n\nPlease:\n1. Connect a microphone\n2. Check if it's working in your system settings\n3. Try again";
+            break;
+          case "network":
+            errorMessage = "❌ Connection issue!\n\nThis could be:\n1. Internet connection problem\n2. Microphone permission issue\n3. Browser security settings\n\nTry:\n- Check your internet connection\n- Allow microphone permissions\n- Use Chrome or Edge browser\n- Make sure you're on HTTPS or localhost";
+            break;
+          case "aborted":
+            // Don't show alert for aborted, user stopped it
+            console.log("Speech recognition aborted");
+            return;
+          default:
+            errorMessage = `❌ Speech recognition error: ${event.error}\n\nPlease try again or check your browser console for details.`;
+        }
+
+        if (errorMessage) {
+          alert(errorMessage);
+        }
       };
+    }
+
+    // Cleanup function
+    return () => {
+      if (recognitionRef.current && isListening) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          console.log("Cleanup: Recognition already stopped");
+        }
+      }
+    };
+  }, []);
+
+  // Check if running on HTTPS or localhost
+  useEffect(() => {
+    const isSecureContext = window.isSecureContext;
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+    if (!isSecureContext && !isLocalhost) {
+      console.warn("⚠️ Speech Recognition requires HTTPS or localhost!");
+      console.warn("Current URL:", window.location.href);
+    } else {
+      console.log("✅ Running in secure context - Speech Recognition available");
     }
   }, []);
 
@@ -96,17 +175,65 @@ export default function GeminiTextToImage() {
     }
   };
 
-  const toggleMicrophone = () => {
+  const requestMicrophonePermission = async () => {
+    try {
+      console.log("Requesting microphone permission...");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log("Microphone permission granted!");
+      // Stop the stream immediately as we only needed it for permission
+      stream.getTracks().forEach(track => track.stop());
+      return true;
+    } catch (error) {
+      console.error("Microphone permission denied:", error);
+      alert("❌ Microphone Access Denied!\n\nPlease allow microphone access:\n1. Click the 🔒 lock icon in your browser's address bar\n2. Set 'Microphone' to 'Allow'\n3. Refresh the page and try again\n\nError: " + error.message);
+      return false;
+    }
+  };
+
+  const toggleMicrophone = async () => {
     if (!recognitionRef.current) {
-      alert("Speech Recognition is not supported in your browser");
+      alert("❌ Speech Recognition is not supported in your browser.\n\nPlease use Chrome, Edge, or Safari.");
       return;
     }
 
     if (isListening) {
-      recognitionRef.current.stop();
-      setIsListening(false);
+      try {
+        recognitionRef.current.stop();
+        console.log("Stopping speech recognition...");
+      } catch (error) {
+        console.error("Error stopping speech recognition:", error);
+        setIsListening(false);
+      }
     } else {
-      recognitionRef.current.start();
+      // Request microphone permission first
+      const hasPermission = await requestMicrophonePermission();
+      if (!hasPermission) {
+        return;
+      }
+
+      try {
+        console.log("Starting speech recognition...");
+        recognitionRef.current.start();
+      } catch (error) {
+        console.error("Error starting speech recognition:", error);
+
+        // Check if it's because recognition is already started
+        if (error.message && error.message.includes("already started")) {
+          console.log("Recognition already started, stopping and restarting...");
+          try {
+            recognitionRef.current.stop();
+            setTimeout(() => {
+              recognitionRef.current.start();
+            }, 100);
+          } catch (e) {
+            console.error("Failed to restart:", e);
+            setIsListening(false);
+          }
+        } else {
+          alert("❌ Failed to start microphone.\n\nPlease:\n1. Check microphone permissions\n2. Ensure you're using HTTPS or localhost\n3. Try refreshing the page\n\nError: " + error.message);
+          setIsListening(false);
+        }
+      }
     }
   };
 
@@ -250,16 +377,14 @@ export default function GeminiTextToImage() {
           {messages.map((message) => (
             <div
               key={message.id}
-              className={`flex ${
-                message.role === "user" ? "justify-end" : "justify-start"
-              }`}
+              className={`flex ${message.role === "user" ? "justify-end" : "justify-start"
+                }`}
             >
               <div
-                className={`max-w-md lg:max-w-xl ${
-                  message.role === "user"
-                    ? "bg-blue-600/40 border border-blue-500/50"
-                    : "bg-black/40 border border-blue-500/30"
-                } rounded-2xl px-4 py-3 backdrop-blur-sm`}
+                className={`max-w-md lg:max-w-xl ${message.role === "user"
+                  ? "bg-blue-600/40 border border-blue-500/50"
+                  : "bg-black/40 border border-blue-500/30"
+                  } rounded-2xl px-4 py-3 backdrop-blur-sm`}
               >
                 {message.image && (
                   <img
@@ -353,11 +478,10 @@ export default function GeminiTextToImage() {
           {/* Mic */}
           <button
             onClick={toggleMicrophone}
-            className={`transition flex-shrink-0 ${
-              isListening
-                ? "text-red-500 animate-pulse"
-                : "text-blue-400 hover:text-blue-300"
-            }`}
+            className={`transition flex-shrink-0 ${isListening
+              ? "text-red-500 animate-pulse"
+              : "text-blue-400 hover:text-blue-300"
+              }`}
             title={isListening ? "Stop recording" : "Start voice input"}
           >
             <FaMicrophone size={18} />
